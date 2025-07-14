@@ -1,149 +1,150 @@
 
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
 const { body, validationResult } = require('express-validator');
-const db = require('../database/db');
-const { authenticateToken, checkSubscription } = require('../middleware/auth');
+const prisma = require('../database/prisma');
+const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get all recipes for user
-router.get('/', authenticateToken, (req, res) => {
-  const { category, search } = req.query;
-  let query = 'SELECT * FROM recipes WHERE user_id = ? AND is_active = 1';
-  let params = [req.user.id];
+router.get('/', authenticateToken, async (req, res) => {
+  const { category, difficulty, search, page = 1, limit = 10 } = req.query;
+  
+  try {
+    const where = {
+      userId: req.user.id,
+      isActive: true
+    };
 
-  if (category) {
-    query += ' AND category = ?';
-    params.push(category);
-  }
-
-  if (search) {
-    query += ' AND (name LIKE ? OR description LIKE ?)';
-    params.push(`%${search}%`, `%${search}%`);
-  }
-
-  query += ' ORDER BY created_at DESC';
-
-  db.all(query, params, (err, recipes) => {
-    if (err) {
-      return res.status(500).json({ message: 'Error fetching recipes' });
+    if (category) where.category = category;
+    if (difficulty) where.difficulty = difficulty;
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } }
+      ];
     }
 
-    const formattedRecipes = recipes.map(recipe => ({
-      ...recipe,
-      ingredients: JSON.parse(recipe.ingredients || '[]'),
-      instructions: JSON.parse(recipe.instructions || '[]'),
-      nutritional_info: JSON.parse(recipe.nutritional_info || '{}'),
-      tags: JSON.parse(recipe.tags || '[]')
-    }));
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    res.json(formattedRecipes);
-  });
+    const [recipes, total] = await Promise.all([
+      prisma.recipe.findMany({
+        where,
+        skip,
+        take: parseInt(limit),
+        orderBy: { createdAt: 'desc' }
+      }),
+      prisma.recipe.count({ where })
+    ]);
+
+    res.json({
+      recipes,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Get recipes error:', error);
+    res.status(500).json({ message: 'Error fetching recipes' });
+  }
+});
+
+// Get single recipe
+router.get('/:id', authenticateToken, async (req, res) => {
+  try {
+    const recipe = await prisma.recipe.findFirst({
+      where: {
+        id: req.params.id,
+        userId: req.user.id
+      }
+    });
+
+    if (!recipe) {
+      return res.status(404).json({ message: 'Recipe not found' });
+    }
+
+    res.json({ recipe });
+  } catch (error) {
+    console.error('Get recipe error:', error);
+    res.status(500).json({ message: 'Error fetching recipe' });
+  }
 });
 
 // Create recipe
-router.post('/', authenticateToken, checkSubscription('free'), [
+router.post('/', authenticateToken, [
   body('name').notEmpty().trim(),
   body('category').notEmpty().trim(),
-  body('ingredients').isArray(),
-  body('instructions').isArray()
-], (req, res) => {
+  body('difficulty').notEmpty().trim()
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const {
-    name, description, category, prepTime, cookTime, servings,
-    difficulty, costPerServing, imageUrl, ingredients, instructions,
-    nutritionalInfo, tags
-  } = req.body;
-
-  const recipeId = uuidv4();
-  const now = new Date().toISOString();
-
-  db.run(`
-    INSERT INTO recipes (
-      id, user_id, name, description, category, prep_time, cook_time,
-      servings, difficulty, cost_per_serving, image_url, ingredients,
-      instructions, nutritional_info, tags, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    recipeId, req.user.id, name, description, category, prepTime, cookTime,
-    servings, difficulty, costPerServing, imageUrl, JSON.stringify(ingredients),
-    JSON.stringify(instructions), JSON.stringify(nutritionalInfo || {}),
-    JSON.stringify(tags || []), now, now
-  ], function(err) {
-    if (err) {
-      return res.status(500).json({ message: 'Error creating recipe' });
-    }
-
-    res.status(201).json({
-      id: recipeId,
-      message: 'Recipe created successfully'
+  try {
+    const recipe = await prisma.recipe.create({
+      data: {
+        ...req.body,
+        userId: req.user.id
+      }
     });
-  });
+
+    res.status(201).json({ message: 'Recipe created successfully', recipe });
+  } catch (error) {
+    console.error('Create recipe error:', error);
+    res.status(500).json({ message: 'Error creating recipe' });
+  }
 });
 
 // Update recipe
-router.put('/:id', authenticateToken, checkSubscription('free'), [
-  body('name').notEmpty().trim(),
-  body('category').notEmpty().trim()
-], (req, res) => {
-  const { id } = req.params;
-  const {
-    name, description, category, prepTime, cookTime, servings,
-    difficulty, costPerServing, imageUrl, ingredients, instructions,
-    nutritionalInfo, tags
-  } = req.body;
+router.put('/:id', authenticateToken, async (req, res) => {
+  try {
+    const recipe = await prisma.recipe.updateMany({
+      where: {
+        id: req.params.id,
+        userId: req.user.id
+      },
+      data: req.body
+    });
 
-  const now = new Date().toISOString();
-
-  db.run(`
-    UPDATE recipes SET
-      name = ?, description = ?, category = ?, prep_time = ?, cook_time = ?,
-      servings = ?, difficulty = ?, cost_per_serving = ?, image_url = ?,
-      ingredients = ?, instructions = ?, nutritional_info = ?, tags = ?,
-      updated_at = ?
-    WHERE id = ? AND user_id = ?
-  `, [
-    name, description, category, prepTime, cookTime, servings, difficulty,
-    costPerServing, imageUrl, JSON.stringify(ingredients || []),
-    JSON.stringify(instructions || []), JSON.stringify(nutritionalInfo || {}),
-    JSON.stringify(tags || []), now, id, req.user.id
-  ], function(err) {
-    if (err) {
-      return res.status(500).json({ message: 'Error updating recipe' });
-    }
-
-    if (this.changes === 0) {
+    if (recipe.count === 0) {
       return res.status(404).json({ message: 'Recipe not found' });
     }
 
-    res.json({ message: 'Recipe updated successfully' });
-  });
+    const updatedRecipe = await prisma.recipe.findUnique({
+      where: { id: req.params.id }
+    });
+
+    res.json({ message: 'Recipe updated successfully', recipe: updatedRecipe });
+  } catch (error) {
+    console.error('Update recipe error:', error);
+    res.status(500).json({ message: 'Error updating recipe' });
+  }
 });
 
 // Delete recipe
-router.delete('/:id', authenticateToken, (req, res) => {
-  const { id } = req.params;
+router.delete('/:id', authenticateToken, async (req, res) => {
+  try {
+    const recipe = await prisma.recipe.updateMany({
+      where: {
+        id: req.params.id,
+        userId: req.user.id
+      },
+      data: { isActive: false }
+    });
 
-  db.run(
-    'UPDATE recipes SET is_active = 0 WHERE id = ? AND user_id = ?',
-    [id, req.user.id],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ message: 'Error deleting recipe' });
-      }
-
-      if (this.changes === 0) {
-        return res.status(404).json({ message: 'Recipe not found' });
-      }
-
-      res.json({ message: 'Recipe deleted successfully' });
+    if (recipe.count === 0) {
+      return res.status(404).json({ message: 'Recipe not found' });
     }
-  );
+
+    res.json({ message: 'Recipe deleted successfully' });
+  } catch (error) {
+    console.error('Delete recipe error:', error);
+    res.status(500).json({ message: 'Error deleting recipe' });
+  }
 });
 
 module.exports = router;

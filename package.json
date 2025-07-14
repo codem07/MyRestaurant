@@ -4,8 +4,10 @@
   "private": true,
   "dependencies": {
     "@dhiwise/component-tagger": "^1.0.10",
+    "@prisma/client": "^6.11.1",
     "@radix-ui/react-slot": "^1.2.3",
     "@reduxjs/toolkit": "^2.6.1",
+    "@supabase/supabase-js": "^2.51.0",
     "@tailwindcss/forms": "^0.5.7",
     "@testing-library/jest-dom": "^5.15.1",
     "@testing-library/react": "^11.2.7",
@@ -26,6 +28,7 @@
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.484.0",
     "multer": "^2.0.1",
+    "prisma": "^6.11.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-helmet": "^6.1.0",

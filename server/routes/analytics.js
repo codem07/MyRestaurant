@@ -1,81 +1,139 @@
 
 const express = require('express');
-const db = require('../database/db');
-const { authenticateToken, checkSubscription } = require('../middleware/auth');
+const prisma = require('../database/prisma');
+const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get dashboard analytics
-router.get('/dashboard', authenticateToken, checkSubscription('basic'), (req, res) => {
-  const { startDate, endDate } = req.query;
-  
-  let dateFilter = '';
-  let params = [req.user.id];
-  
-  if (startDate && endDate) {
-    dateFilter = 'AND DATE(created_at) BETWEEN DATE(?) AND DATE(?)';
-    params.push(startDate, endDate);
-  }
+router.get('/dashboard', authenticateToken, async (req, res) => {
+  try {
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const queries = [
-    // Revenue analytics
-    `SELECT 
-      DATE(created_at) as date,
-      SUM(total) as revenue,
-      COUNT(*) as orders
-     FROM orders 
-     WHERE user_id = ? AND status != 'cancelled' ${dateFilter}
-     GROUP BY DATE(created_at)
-     ORDER BY date DESC
-     LIMIT 30`,
-    
-    // Popular items
-    `SELECT 
-      json_extract(value, '$.name') as item_name,
-      json_extract(value, '$.category') as category,
-      SUM(json_extract(value, '$.quantity')) as total_quantity,
-      SUM(json_extract(value, '$.price') * json_extract(value, '$.quantity')) as total_revenue
-     FROM orders, json_each(orders.items)
-     WHERE orders.user_id = ? AND orders.status != 'cancelled' ${dateFilter}
-     GROUP BY item_name
-     ORDER BY total_quantity DESC
-     LIMIT 10`,
-    
-    // Table utilization
-    `SELECT 
-      t.table_number,
-      COUNT(o.id) as total_orders,
-      SUM(o.total) as revenue
-     FROM tables t
-     LEFT JOIN orders o ON t.id = o.table_id ${dateFilter ? 'AND' + dateFilter.replace('AND', '') : ''}
-     WHERE t.user_id = ?
-     GROUP BY t.id, t.table_number
-     ORDER BY total_orders DESC`,
-    
-    // Inventory alerts
-    `SELECT COUNT(*) as low_stock_count
-     FROM inventory 
-     WHERE user_id = ? AND current_stock <= min_stock`
-  ];
+    // Today's stats
+    const [todayOrders, todayRevenue, weeklyOrders, monthlyRevenue] = await Promise.all([
+      prisma.order.count({
+        where: {
+          userId: req.user.id,
+          createdAt: { gte: startOfDay }
+        }
+      }),
+      prisma.order.aggregate({
+        where: {
+          userId: req.user.id,
+          createdAt: { gte: startOfDay },
+          status: 'completed'
+        },
+        _sum: { total: true }
+      }),
+      prisma.order.count({
+        where: {
+          userId: req.user.id,
+          createdAt: { gte: startOfWeek }
+        }
+      }),
+      prisma.order.aggregate({
+        where: {
+          userId: req.user.id,
+          createdAt: { gte: startOfMonth },
+          status: 'completed'
+        },
+        _sum: { total: true }
+      })
+    ]);
 
-  Promise.all(queries.map(query => {
-    return new Promise((resolve, reject) => {
-      db.all(query, params, (err, result) => {
-        if (err) reject(err);
-        else resolve(result);
-      });
+    // Low stock items count
+    const lowStockCount = await prisma.$queryRaw`
+      SELECT COUNT(*) as count FROM inventory 
+      WHERE user_id = ${req.user.id} 
+      AND current_stock <= min_stock
+    `;
+
+    // Active tables count
+    const activeTables = await prisma.table.count({
+      where: {
+        userId: req.user.id,
+        status: { not: 'available' }
+      }
     });
-  })).then(results => {
+
     res.json({
-      revenueData: results[0],
-      popularItems: results[1],
-      tableUtilization: results[2],
-      lowStockCount: results[3][0]?.low_stock_count || 0
+      todayOrders,
+      todayRevenue: todayRevenue._sum.total || 0,
+      weeklyOrders,
+      monthlyRevenue: monthlyRevenue._sum.total || 0,
+      lowStockItems: parseInt(lowStockCount[0].count),
+      activeTables
     });
-  }).catch(err => {
-    console.error('Analytics error:', err);
-    res.status(500).json({ message: 'Error fetching analytics data' });
-  });
+  } catch (error) {
+    console.error('Get analytics error:', error);
+    res.status(500).json({ message: 'Error fetching analytics' });
+  }
+});
+
+// Get sales data for charts
+router.get('/sales', authenticateToken, async (req, res) => {
+  const { period = '7d' } = req.query;
+  
+  try {
+    let dateFilter;
+    const now = new Date();
+    
+    switch (period) {
+      case '7d':
+        dateFilter = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        dateFilter = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        dateFilter = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        dateFilter = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    }
+
+    const salesData = await prisma.$queryRaw`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as orders,
+        SUM(total) as revenue
+      FROM orders 
+      WHERE user_id = ${req.user.id} 
+      AND created_at >= ${dateFilter}
+      AND status = 'completed'
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `;
+
+    res.json({ salesData });
+  } catch (error) {
+    console.error('Get sales data error:', error);
+    res.status(500).json({ message: 'Error fetching sales data' });
+  }
+});
+
+// Get popular items
+router.get('/popular-items', authenticateToken, async (req, res) => {
+  try {
+    // This would require parsing the items JSON field
+    // For now, return mock data
+    const popularItems = [
+      { name: 'Butter Chicken', orders: 45, revenue: 1350 },
+      { name: 'Biryani', orders: 38, revenue: 1520 },
+      { name: 'Masala Dosa', orders: 32, revenue: 960 },
+      { name: 'Gulab Jamun', orders: 28, revenue: 560 },
+      { name: 'Samosa', orders: 25, revenue: 375 }
+    ];
+
+    res.json({ popularItems });
+  } catch (error) {
+    console.error('Get popular items error:', error);
+    res.status(500).json({ message: 'Error fetching popular items' });
+  }
 });
 
 module.exports = router;

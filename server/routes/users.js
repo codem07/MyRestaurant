@@ -2,7 +2,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
-const db = require('../database/db');
+const prisma = require('../database/prisma');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
@@ -12,27 +12,40 @@ router.put('/profile', authenticateToken, [
   body('firstName').notEmpty().trim(),
   body('lastName').notEmpty().trim(),
   body('restaurantName').notEmpty().trim()
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
 
   const { firstName, lastName, restaurantName, phone, address } = req.body;
-  const now = new Date().toISOString();
 
-  db.run(`
-    UPDATE users SET
-      first_name = ?, last_name = ?, restaurant_name = ?, 
-      phone = ?, restaurant_address = ?, updated_at = ?
-    WHERE id = ?
-  `, [firstName, lastName, restaurantName, phone, address, now, req.user.id], function(err) {
-    if (err) {
-      return res.status(500).json({ message: 'Error updating profile' });
-    }
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        firstName,
+        lastName,
+        restaurantName,
+        phone,
+        restaurantAddress: address
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        restaurantName: true,
+        phone: true,
+        restaurantAddress: true
+      }
+    });
 
-    res.json({ message: 'Profile updated successfully' });
-  });
+    res.json({ message: 'Profile updated successfully', user: updatedUser });
+  } catch (error) {
+    console.error('Profile update error:', error);
+    res.status(500).json({ message: 'Error updating profile' });
+  }
 });
 
 // Change password
@@ -54,21 +67,43 @@ router.put('/password', authenticateToken, [
     }
 
     const hashedNewPassword = await bcrypt.hash(newPassword, 12);
-    const now = new Date().toISOString();
+    
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { password: hashedNewPassword }
+    });
 
-    db.run(
-      'UPDATE users SET password = ?, updated_at = ? WHERE id = ?',
-      [hashedNewPassword, now, req.user.id],
-      function(err) {
-        if (err) {
-          return res.status(500).json({ message: 'Error updating password' });
-        }
-
-        res.json({ message: 'Password updated successfully' });
-      }
-    );
+    res.json({ message: 'Password updated successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Password update error:', error);
+    res.status(500).json({ message: 'Error updating password' });
+  }
+});
+
+// Get user profile
+router.get('/profile', authenticateToken, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        restaurantName: true,
+        phone: true,
+        restaurantAddress: true,
+        subscriptionPlan: true,
+        subscriptionStatus: true,
+        subscriptionExpiresAt: true,
+        createdAt: true
+      }
+    });
+
+    res.json({ user });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ message: 'Error fetching profile' });
   }
 });
 

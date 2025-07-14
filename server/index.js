@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -13,14 +14,12 @@ const orderRoutes = require('./routes/orders');
 const tableRoutes = require('./routes/tables');
 const analyticsRoutes = require('./routes/analytics');
 const subscriptionRoutes = require('./routes/subscriptions');
+const prisma = require('./database/prisma');
 
 const { createSampleData } = require('./startup');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-
-// Initialize sample data
-createSampleData();
 
 // Trust proxy for rate limiting
 app.set('trust proxy', 1);
@@ -28,7 +27,7 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:4028',
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true
 }));
 
@@ -69,8 +68,9 @@ if (process.env.NODE_ENV === 'production') {
   app.get('/', (req, res) => {
     res.json({ 
       message: 'Recipe Master API Server is running',
-      frontend: 'http://localhost:4028',
-      api: `http://localhost:${PORT}/api`
+      frontend: 'http://localhost:3000',
+      api: `http://localhost:${PORT}/api`,
+      database: 'Supabase PostgreSQL with Prisma'
     });
   });
 }
@@ -84,7 +84,37 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
-  console.log('Demo login: demo@recipemaster.com / password123');
+// Initialize server
+const startServer = async () => {
+  try {
+    // Test database connection
+    await prisma.$connect();
+    console.log('Connected to Supabase database via Prisma');
+
+    // Initialize sample data
+    await createSampleData();
+
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on http://0.0.0.0:${PORT}`);
+      console.log('Demo login: demo@recipemaster.com / password123');
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
 });

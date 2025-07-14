@@ -1,87 +1,167 @@
 
-const db = require('./database/db');
 const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
+const prisma = require('./database/prisma');
 
 const createSampleData = async () => {
   console.log('Creating sample data...');
   
   try {
-    // Create sample user (for testing)
-    const hashedPassword = await bcrypt.hash('password123', 12);
-    const userId = uuidv4();
-    const subscriptionExpiresAt = new Date();
-    subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
-
     // Check if demo user already exists
-    const existingUser = await new Promise((resolve, reject) => {
-      db.get('SELECT id FROM users WHERE email = ?', ['demo@recipemaster.com'], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
+    const existingUser = await prisma.user.findUnique({
+      where: { email: 'demo@recipemaster.com' }
     });
 
-    let actualUserId = userId;
+    let userId;
     if (!existingUser) {
-      await new Promise((resolve, reject) => {
-        db.run(`
-          INSERT INTO users (id, email, password, first_name, last_name, restaurant_name, subscription_expires_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [userId, 'demo@recipemaster.com', hashedPassword, 'Demo', 'User', 'Demo Restaurant', subscriptionExpiresAt.toISOString()], function(err) {
-          if (err) reject(err);
-          else resolve();
-        });
+      const hashedPassword = await bcrypt.hash('password123', 12);
+      const subscriptionExpiresAt = new Date();
+      subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
+
+      const user = await prisma.user.create({
+        data: {
+          email: 'demo@recipemaster.com',
+          password: hashedPassword,
+          firstName: 'Demo',
+          lastName: 'User',
+          restaurantName: 'Demo Restaurant',
+          subscriptionExpiresAt
+        }
       });
+
+      userId = user.id;
       console.log('Demo user created successfully');
     } else {
-      actualUserId = existingUser.id;
+      userId = existingUser.id;
       console.log('Demo user already exists');
     }
 
-  // Create sample tables
-    const tableIds = [];
-    for (let i = 1; i <= 10; i++) {
-      const tableId = uuidv4();
-      tableIds.push(tableId);
-      await new Promise((resolve, reject) => {
-        db.run(`
-          INSERT OR IGNORE INTO tables (id, user_id, table_number, capacity, x_position, y_position)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `, [tableId, actualUserId, i, Math.floor(Math.random() * 4) + 2, (i - 1) * 100, 100], function(err) {
-          if (err) reject(err);
-          else resolve();
-        });
+    // Create sample recipes
+    const existingRecipes = await prisma.recipe.findMany({
+      where: { userId }
+    });
+
+    if (existingRecipes.length === 0) {
+      await prisma.recipe.createMany({
+        data: [
+          {
+            userId,
+            name: 'Butter Chicken',
+            description: 'Creamy tomato-based curry with tender chicken pieces',
+            category: 'main-course',
+            prepTime: 30,
+            cookTime: 45,
+            servings: 4,
+            difficulty: 'medium',
+            costPerServing: 150,
+            instructions: JSON.stringify([
+              { id: 1, instruction: 'Marinate chicken in yogurt and spices for 30 minutes', timer: 30 },
+              { id: 2, instruction: 'Cook chicken in a pan until golden brown', timer: 15 },
+              { id: 3, instruction: 'Prepare tomato-based sauce with cream', timer: 20 },
+              { id: 4, instruction: 'Combine chicken with sauce and simmer', timer: 10 }
+            ]),
+            ingredients: JSON.stringify([
+              { name: 'Chicken', quantity: 500, unit: 'grams' },
+              { name: 'Tomatoes', quantity: 400, unit: 'grams' },
+              { name: 'Cream', quantity: 200, unit: 'ml' },
+              { name: 'Spices', quantity: 1, unit: 'set' }
+            ])
+          },
+          {
+            userId,
+            name: 'Masala Dosa',
+            description: 'Crispy South Indian crepe with spiced potato filling',
+            category: 'main-course',
+            prepTime: 480,
+            cookTime: 30,
+            servings: 4,
+            difficulty: 'hard',
+            costPerServing: 80,
+            instructions: JSON.stringify([
+              { id: 1, instruction: 'Soak rice and dal for 4-6 hours', timer: 360 },
+              { id: 2, instruction: 'Grind and ferment batter overnight', timer: 480 },
+              { id: 3, instruction: 'Prepare potato masala', timer: 20 },
+              { id: 4, instruction: 'Make crispy dosa and add filling', timer: 10 }
+            ]),
+            ingredients: JSON.stringify([
+              { name: 'Rice', quantity: 300, unit: 'grams' },
+              { name: 'Urad Dal', quantity: 100, unit: 'grams' },
+              { name: 'Potatoes', quantity: 500, unit: 'grams' },
+              { name: 'Spices', quantity: 1, unit: 'set' }
+            ])
+          }
+        ]
       });
+      console.log('Sample recipes created');
     }
 
-  // Create sample inventory items
-  const inventoryItems = [
-    { name: 'Tomatoes', category: 'Vegetables', currentStock: 50, unit: 'kg', minStock: 10, costPerUnit: 2.5 },
-    { name: 'Chicken Breast', category: 'Meat', currentStock: 25, unit: 'kg', minStock: 5, costPerUnit: 12.0 },
-    { name: 'Pasta', category: 'Dry Goods', currentStock: 100, unit: 'kg', minStock: 20, costPerUnit: 1.5 },
-    { name: 'Olive Oil', category: 'Oils', currentStock: 15, unit: 'liters', minStock: 5, costPerUnit: 8.0 },
-    { name: 'Cheese', category: 'Dairy', currentStock: 8, unit: 'kg', minStock: 3, costPerUnit: 15.0 }
-  ];
+    // Create sample inventory
+    const existingInventory = await prisma.inventory.findMany({
+      where: { userId }
+    });
 
-  inventoryItems.forEach(item => {
-    const itemId = uuidv4();
-    db.run(`
-      INSERT OR IGNORE INTO inventory (id, user_id, name, category, current_stock, unit, min_stock, cost_per_unit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [itemId, userId, item.name, item.category, item.currentStock, item.unit, item.minStock, item.costPerUnit]);
-  });
+    if (existingInventory.length === 0) {
+      await prisma.inventory.createMany({
+        data: [
+          {
+            userId,
+            name: 'Chicken Breast',
+            category: 'meat',
+            currentStock: 5,
+            unit: 'kg',
+            minStock: 2,
+            costPerUnit: 300,
+            supplier: 'Premium Meats'
+          },
+          {
+            userId,
+            name: 'Basmati Rice',
+            category: 'grains',
+            currentStock: 25,
+            unit: 'kg',
+            minStock: 10,
+            costPerUnit: 120,
+            supplier: 'Grain Suppliers Ltd'
+          },
+          {
+            userId,
+            name: 'Tomatoes',
+            category: 'vegetables',
+            currentStock: 8,
+            unit: 'kg',
+            minStock: 5,
+            costPerUnit: 40,
+            supplier: 'Fresh Vegetables Co'
+          }
+        ]
+      });
+      console.log('Sample inventory created');
+    }
 
-  console.log('Sample data created successfully!');
+    // Create sample tables
+    const existingTables = await prisma.table.findMany({
+      where: { userId }
+    });
+
+    if (existingTables.length === 0) {
+      await prisma.table.createMany({
+        data: [
+          { userId, tableNumber: 1, capacity: 2, status: 'available' },
+          { userId, tableNumber: 2, capacity: 4, status: 'available' },
+          { userId, tableNumber: 3, capacity: 6, status: 'available' },
+          { userId, tableNumber: 4, capacity: 2, status: 'available' },
+          { userId, tableNumber: 5, capacity: 4, status: 'available' }
+        ]
+      });
+      console.log('Sample tables created');
+    }
+
+    console.log('Sample data created successfully!');
     console.log('Demo login: demo@recipemaster.com / password123');
+
   } catch (error) {
-    console.error('Error creating sample data:', error.message);
+    console.error('Error creating sample data:', error);
     throw error;
   }
 };
-
-// Run if called directly
-if (require.main === module) {
-  createSampleData();
-}
 
 module.exports = { createSampleData };
