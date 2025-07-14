@@ -29,7 +29,7 @@ mode = "parallel"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd server && node index.js"
+args = "cd server && node startup.js && node index.js"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
