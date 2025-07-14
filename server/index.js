@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -57,10 +56,24 @@ app.use('/api/tables', tableRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
+// Serve static files from React build (if in production)
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, '../build')));
+
+  // Catch all handler: send back React's index.html file for SPA routing
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../build/index.html'));
+  });
+} else {
+  // Development mode - simple API check route
+  app.get('/', (req, res) => {
+    res.json({ 
+      message: 'Recipe Master API Server is running',
+      frontend: 'http://localhost:4028',
+      api: `http://localhost:${PORT}/api`
+    });
+  });
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {
