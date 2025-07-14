@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import Icon from '../AppIcon';
 
 const MainSidebar = () => {
@@ -11,6 +12,7 @@ const MainSidebar = () => {
     inventory: 3,
     kitchen: 8
   });
+  const { user, logout } = useAuth();
 
   const roles = [
     { value: 'Administrator', label: 'Administrator', icon: 'Shield' },
@@ -215,6 +217,19 @@ const MainSidebar = () => {
               />
             </button>
           </div>
+          {/* User Info and Logout */}
+          {user && (
+            <div className="p-4 border-t border-border">
+              <p className="text-sm text-muted-foreground">Logged in as:</p>
+              <p className="text-sm font-medium">{user.email}</p>
+              <button
+                onClick={logout}
+                className="w-full mt-2 py-2 text-sm bg-red-500 text-white rounded-md hover:bg-red-700 transition-micro"
+              >
+                Logout
+              </button>
+            </div>
+          )}
         </div>
       </nav>
 
