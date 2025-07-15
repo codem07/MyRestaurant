@@ -1,12 +1,7 @@
-body {
-  margin: 0;
-  padding: 0;
-  font-family: Inter;
-}
+@import './tailwind.css';
 
-* {
-  box-sizing: border-box;
-  line-height: normal;
+/* Add any global styles below */
+
+body {
   font-family: inherit;
-  margin: unset;
-}
+} 
